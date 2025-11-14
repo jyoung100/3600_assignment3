@@ -8,6 +8,8 @@
 #include <string.h>
 #include "Practical.h"
 
+#define IMAGE_CHUNK_SIZE 8192
+
 int main(int argc, char *argv[]) {
   if (argc != 3)
     DieWithUserMessage("Parameter(s)", "<Server Address/Name> <Server Port/Service>");
@@ -15,25 +17,21 @@ int main(int argc, char *argv[]) {
   char *server = argv[1];
   char *servPort = argv[2];
 
-  // Tell the system what kind(s) of address info we want
   struct addrinfo addrCriteria;
   memset(&addrCriteria, 0, sizeof(addrCriteria));
   addrCriteria.ai_family = AF_UNSPEC;
   addrCriteria.ai_socktype = SOCK_STREAM;
   addrCriteria.ai_protocol = IPPROTO_TCP;
 
-  // Get address(es)
   struct addrinfo *servAddr;
   int rtnVal = getaddrinfo(server, servPort, &addrCriteria, &servAddr);
   if (rtnVal != 0)
     DieWithUserMessage("getaddrinfo() failed", gai_strerror(rtnVal));
 
-  // Create a TCP socket
   int sock = socket(servAddr->ai_family, servAddr->ai_socktype, servAddr->ai_protocol);
   if (sock < 0)
     DieWithSystemMessage("socket() failed");
 
-  // Establish the connection to the server
   if (connect(sock, servAddr->ai_addr, servAddr->ai_addrlen) < 0)
     DieWithSystemMessage("connect() failed");
 
@@ -55,10 +53,10 @@ int main(int argc, char *argv[]) {
     int choice;
     if (scanf("%d", &choice) != 1) {
       printf("Invalid input. Please enter a number.\n");
-      while (getchar() != '\n'); // Clear input buffer
+      while (getchar() != '\n'); 
       continue;
     }
-    getchar(); // Consume newline
+    getchar();
 
     if (choice == 1) {
       while (1) {
@@ -75,13 +73,11 @@ int main(int argc, char *argv[]) {
           continue;
         }
 
-        // Send request to server
         char request[BUFSIZE];
         snprintf(request, BUFSIZE, "TEXT:%s", filename);
         if (send(sock, request, strlen(request), 0) < 0)
           DieWithSystemMessage("send() failed");
 
-        // Receive response
         ssize_t numBytes = recv(sock, buffer, BUFSIZE - 1, 0);
         if (numBytes < 0)
           DieWithSystemMessage("recv() failed");
@@ -105,20 +101,16 @@ int main(int argc, char *argv[]) {
           
           while (1) {
             numBytes = recv(sock, buffer, BUFSIZE - 1, 0);
-            if (numBytes < 0)
-              DieWithSystemMessage("recv() failed");
+            
             if (numBytes == 0)
               break;
 
             buffer[numBytes] = '\0';
 
-            // Check if FILE_END marker is in the buffer
             char *fileEndPtr = strstr(buffer, "FILE_END");
             if (fileEndPtr != NULL) {
-              // Write everything before FILE_END
               size_t bytesBeforeEnd = fileEndPtr - buffer;
               if (bytesBeforeEnd > 0) {
-                // Append to line buffer if we have partial line
                 if (lineBufferPos > 0) {
                   memcpy(lineBuffer + lineBufferPos, buffer, bytesBeforeEnd);
                   lineBuffer[lineBufferPos + bytesBeforeEnd] = '\0';
@@ -137,13 +129,11 @@ int main(int argc, char *argv[]) {
               break;
             }
 
-            // Process complete lines
             char *lineStart = buffer;
             char *newline;
             while ((newline = strchr(lineStart, '\n')) != NULL) {
               size_t lineLen = newline - lineStart + 1;
               
-              // If we have a partial line from before, complete it
               if (lineBufferPos > 0) {
                 memcpy(lineBuffer + lineBufferPos, lineStart, lineLen);
                 lineBuffer[lineBufferPos + lineLen] = '\0';
@@ -162,7 +152,6 @@ int main(int argc, char *argv[]) {
               lineStart = newline + 1;
             }
             
-            // Save any remaining partial line
             size_t remaining = strlen(lineStart);
             if (remaining > 0) {
               if (lineBufferPos + remaining < BUFSIZE) {
@@ -173,7 +162,6 @@ int main(int argc, char *argv[]) {
             }
           }
           
-          // Write any remaining partial line
           if (lineBufferPos > 0) {
             printf("%s", lineBuffer);
             fputs(lineBuffer, outFile);
@@ -206,12 +194,9 @@ int main(int argc, char *argv[]) {
         char request[BUFSIZE];
         snprintf(request, BUFSIZE, "IMAGE:%s", filename);
         if (send(sock, request, strlen(request), 0) < 0)
-          DieWithSystemMessage("send() failed");
 
-        // Receive response
         ssize_t numBytes = recv(sock, buffer, BUFSIZE - 1, 0);
-        if (numBytes < 0)
-          DieWithSystemMessage("recv() failed");
+        
         buffer[numBytes] = '\0';
 
         if (strncmp(buffer, "ERROR:", 6) == 0) {
@@ -225,28 +210,30 @@ int main(int argc, char *argv[]) {
 
           printf("Downloading %s\n", filename);
           FILE *outFile = fopen("downloaded_image.ppm", "wb");
-          if (outFile == NULL) {
-            DieWithSystemMessage("fopen() failed for downloaded_image.ppm");
-          }
 
           size_t totalBytes = 0;
-          char recvBuffer[BUFSIZE + 8]; // Extra space for FILE_END marker
+          char recvBuffer[IMAGE_CHUNK_SIZE + 8]; // Extra space for FILE_END marker
           size_t bufferPos = 0;
           
           while (1) {
-            numBytes = recv(sock, recvBuffer + bufferPos, BUFSIZE - bufferPos, 0);
+            size_t maxRecv = IMAGE_CHUNK_SIZE - bufferPos;
+            if (maxRecv == 0) {
+              fwrite(recvBuffer, 1, IMAGE_CHUNK_SIZE, outFile);
+              totalBytes += IMAGE_CHUNK_SIZE;
+              bufferPos = 0;
+              maxRecv = IMAGE_CHUNK_SIZE;
+            }
+            
+            numBytes = recv(sock, recvBuffer + bufferPos, maxRecv, 0);
             if (numBytes < 0)
               DieWithSystemMessage("recv() failed");
             if (numBytes == 0)
               break;
 
             bufferPos += numBytes;
-            recvBuffer[bufferPos] = '\0';
 
-            // Check for FILE_END marker
             char *fileEndPtr = NULL;
             if (bufferPos >= 8) {
-              // Search for FILE_END in the buffer
               for (size_t i = 0; i <= bufferPos - 8; i++) {
                 if (memcmp(recvBuffer + i, "FILE_END", 8) == 0) {
                   fileEndPtr = recvBuffer + i;
@@ -255,13 +242,11 @@ int main(int argc, char *argv[]) {
               }
             }
             if (fileEndPtr != NULL) {
-              // Write everything before FILE_END
               size_t bytesBeforeEnd = fileEndPtr - recvBuffer;
               if (bytesBeforeEnd > 0) {
                 fwrite(recvBuffer, 1, bytesBeforeEnd, outFile);
                 totalBytes += bytesBeforeEnd;
                 
-                // Update progress bar
                 int progress = fileSize > 0 ? (int)((totalBytes * 100) / fileSize) : 0;
                 if (progress > 100) progress = 100;
                 printf("\rProgress: [");
@@ -280,35 +265,44 @@ int main(int argc, char *argv[]) {
               break;
             }
 
-            // Write complete buffer to file
+            if (bufferPos >= IMAGE_CHUNK_SIZE) {
+              fwrite(recvBuffer, 1, IMAGE_CHUNK_SIZE, outFile);
+              totalBytes += IMAGE_CHUNK_SIZE;
+              
+              size_t remaining = bufferPos - IMAGE_CHUNK_SIZE;
+              if (remaining > 0) {
+                memmove(recvBuffer, recvBuffer + IMAGE_CHUNK_SIZE, remaining);
+              }
+              bufferPos = remaining;
+
+              int progress = fileSize > 0 ? (int)((totalBytes * 100) / fileSize) : 0;
+              if (progress > 100) progress = 100;
+
+              printf("\rProgress: [");
+              int position = (progress * 20) / 100;
+              for (int i = 0; i < 20; i++) {
+                if (i < position)
+                  printf("=");
+                else if (i == position)
+                  printf(">");
+                else
+                  printf("-");
+              }
+              printf("] %d%% (%zu/%zu bytes)", progress, totalBytes, fileSize);
+              fflush(stdout);
+
+              usleep(500000); 
+            }
+          }
+          
+          if (bufferPos > 0) {
             fwrite(recvBuffer, 1, bufferPos, outFile);
             totalBytes += bufferPos;
-
-            // Update progress bar
-            int progress = fileSize > 0 ? (int)((totalBytes * 100) / fileSize) : 0;
-            if (progress > 100) progress = 100;
-
-            printf("\rProgress: [");
-            int position = (progress * 20) / 100;
-            for (int i = 0; i < 20; i++) {
-              if (i < position)
-                printf("=");
-              else if (i == position)
-                printf(">");
-              else
-                printf("-");
-            }
-            printf("] %d%% (%zu/%zu bytes)", progress, totalBytes, fileSize);
-            fflush(stdout);
-
-            bufferPos = 0; // Reset buffer position
-            usleep(500000); // 0.5 second delay
           }
 
           fclose(outFile);
           printf("\rProgress: [====================] 100%% (%zu/%zu bytes)\n", totalBytes, fileSize);
           
-          // Format file size for display
           if (totalBytes < 1024) {
             printf("Downloaded %zu bytes\n", totalBytes);
           } else if (totalBytes < 1024 * 1024) {
@@ -325,7 +319,6 @@ int main(int argc, char *argv[]) {
       if (send(sock, "EXIT", 4, 0) < 0)
         DieWithSystemMessage("send() failed");
       
-      // Wait for BYE response
       recv(sock, buffer, BUFSIZE - 1, 0);
       
       printf("Goodbye!!!\n");
@@ -340,3 +333,4 @@ int main(int argc, char *argv[]) {
   close(sock);
   return 0;
 }
+
