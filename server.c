@@ -11,6 +11,7 @@
 #include "Practical.h"
 
 #define MAXPENDING 5
+#define IMAGE_CHUNK_SIZE 8192
 
 int main(int argc, char *argv[]) {
   if (argc != 2)
@@ -55,12 +56,10 @@ int main(int argc, char *argv[]) {
     struct sockaddr_storage clntAddr;
     socklen_t clntAddrLen = sizeof(clntAddr);
 
-    // Wait for a client to connect
     int clntSock = accept(servSock, (struct sockaddr *) &clntAddr, &clntAddrLen);
     if (clntSock < 0)
       DieWithSystemMessage("accept() failed");
 
-    // Print client connection info
     char ipStr[INET6_ADDRSTRLEN];
     if (clntAddr.ss_family == AF_INET) {
       struct sockaddr_in *ipv4 = (struct sockaddr_in *)&clntAddr;
@@ -73,7 +72,6 @@ int main(int argc, char *argv[]) {
     }
     printf("Connected to IP: %s\n", ipStr);
 
-    // Handle client requests
     char buffer[BUFSIZE];
     ssize_t numBytesRcvd;
 
@@ -92,19 +90,15 @@ int main(int argc, char *argv[]) {
           continue;
         }
 
-        // Send OK confirmation
         send(clntSock, "OK", 2, 0);
 
-        // Send file line by line
         char line[BUFSIZE];
         size_t totalBytes = 0;
         while (fgets(line, sizeof(line), file) != NULL) {
           size_t lineLen = strlen(line);
           ssize_t bytesSent = send(clntSock, line, lineLen, 0);
-          if (bytesSent < 0)
-            DieWithSystemMessage("send() failed");
           totalBytes += lineLen;
-          usleep(500000); // 0.5 second delay between lines
+          usleep(500000); 
         }
 
         fclose(file);
@@ -123,7 +117,6 @@ int main(int argc, char *argv[]) {
           continue;
         }
 
-        // Get file size
         struct stat fileStat;
         if (stat(filename, &fileStat) < 0) {
           char errorMsg[BUFSIZE];
@@ -133,27 +126,24 @@ int main(int argc, char *argv[]) {
           continue;
         }
 
-        // Send OK with file size
         char okMsg[BUFSIZE];
         snprintf(okMsg, BUFSIZE, "OK:%zu", (size_t)fileStat.st_size);
         send(clntSock, okMsg, strlen(okMsg), 0);
 
-        // Send file in chunks
-        char chunk[BUFSIZE];
+        char chunk[IMAGE_CHUNK_SIZE];
         size_t totalBytes = 0;
         size_t bytesRead;
-        while ((bytesRead = fread(chunk, 1, BUFSIZE, file)) > 0) {
+        while ((bytesRead = fread(chunk, 1, IMAGE_CHUNK_SIZE, file)) > 0) {
           ssize_t bytesSent = send(clntSock, chunk, bytesRead, 0);
           if (bytesSent < 0)
             DieWithSystemMessage("send() failed");
           totalBytes += bytesRead;
-          usleep(500000); // 0.5 second delay between chunks
+          usleep(500000); 
         }
 
         fclose(file);
         send(clntSock, "FILE_END", 8, 0);
         
-        // Format file size for display
         if (totalBytes < 1024) {
           printf("Sent %s (%zu bytes) to the client\n", filename, totalBytes);
         } else if (totalBytes < 1024 * 1024) {
@@ -177,3 +167,4 @@ int main(int argc, char *argv[]) {
   close(servSock);
   return 0;
 }
+
